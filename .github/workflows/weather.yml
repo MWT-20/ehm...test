@@ -1,0 +1,188 @@
+name: Meteo dei commit
+
+# Ad ogni push scrive, sotto ogni commit, un commento (quello facoltativo che
+# si vede nella pagina del commit, NON il messaggio/titolo del commit)
+# raccontato come una previsione del tempo.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write   # serve per creare i commenti sui commit
+
+jobs:
+  previsioni:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Scrivi le previsioni
+        uses: actions/github-script@v7
+        env:
+          FUSO_ORARIO: Europe/Rome
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const fuso = process.env.FUSO_ORARIO || 'UTC';
+            const MARCATORE = '<!-- meteo-commit -->';
+            const commits = context.payload.commits || [];
+
+            // Sceglie una frase in modo deterministico dallo sha (stesso commit = stessa frase)
+            const scegli = (lista, sha) => lista[parseInt(sha.slice(0, 6), 16) % lista.length];
+
+            const CONDIZIONI = {
+              temporale: {
+                icona: '⛈️', titolo: 'Temporale',
+                frasi: [
+                  'Fulmini all\'orizzonte: qualcuno ha fatto un revert e il cielo si è incupito.',
+                  'Inversione di rotta improvvisa, il vento cambia direzione di colpo.',
+                  'Si torna indietro nel tempo: forti precipitazioni di "ctrl+z".',
+                ],
+              },
+              allerta: {
+                icona: '🚨', titolo: 'Allerta rossa',
+                frasi: [
+                  'Allerta rossa: hotfix in corso, si consiglia di restare al riparo dal deploy.',
+                  'Pressione in picchiata. Qualcosa di urgente sta attraversando il repo.',
+                  'Emergenza meteo: raffiche di correzioni urgenti su tutta la zona.',
+                ],
+              },
+              pioggia: {
+                icona: '🌧️', titolo: 'Pioggia leggera',
+                frasi: [
+                  'Qualche goccia di fix: i bug vengono lavati via, ma il terreno resta umido.',
+                  'Precipitazioni sparse di correzioni, aspettarsi un cielo più pulito domani.',
+                  'Piove sul bagnato: un altro bug sistemato, probabile schiarita in serata.',
+                ],
+              },
+              nuvoloso: {
+                icona: '☁️', titolo: 'Nuvoloso',
+                frasi: [
+                  'Cielo coperto: lavoro in corso, visibilità ridotta sul risultato finale.',
+                  'Nubi di "wip" sopra il repo, il sole non è ancora uscito.',
+                  'Banchi di nuvole a sviluppo incompleto, schiarite previste col prossimo commit.',
+                ],
+              },
+              nebbia: {
+                icona: '🌫️', titolo: 'Nebbia notturna',
+                frasi: [
+                  'Nebbia fitta: commit a ore piccole, visibilità e lucidità ai minimi.',
+                  'Notte inoltrata, aria pesante. Si consiglia una revisione col sole alto.',
+                  'Foschia nelle ore buie: qualcuno stava ancora programmando mentre tutti dormivano.',
+                ],
+              },
+              vento: {
+                icona: '🌬️', titolo: 'Vento forte',
+                frasi: [
+                  'Raffiche di centinaia di righe: attenzione agli oggetti non fissati al main.',
+                  'Perturbazione di grandi dimensioni, il diff si vede da lontano.',
+                  'Venti sostenuti su molti file, la revisione sarà impegnativa.',
+                ],
+              },
+              arcobaleno: {
+                icona: '🌈', titolo: 'Arcobaleno',
+                frasi: [
+                  'Dopo la tempesta arriva la release: arcobaleno su tutto il repo.',
+                  'Cielo limpido e un arcobaleno a segnare una nuova versione.',
+                  'Schiarita completa, si consiglia di uscire e festeggiare il rilascio.',
+                ],
+              },
+              brezza: {
+                icona: '🍃', titolo: 'Brezza leggera',
+                frasi: [
+                  'Una brezza di documentazione attraversa il repo: tutto tranquillo.',
+                  'Aria fresca e leggera, solo parole e niente codice.',
+                  'Venticello gentile da est, ideale per una passeggiata nel README.',
+                ],
+              },
+              pulizia: {
+                icona: '🍂', titolo: 'Vento di pulizia',
+                frasi: [
+                  'Il vento porta via foglie secche: molto codice rimosso, aria più leggera.',
+                  'Autunno nel repo: cadono righe vecchie, il paesaggio si fa più pulito.',
+                  'Spazzata decisa, il codice morto non ha resistito alle raffiche.',
+                ],
+              },
+              sole: {
+                icona: '☀️', titolo: 'Sereno',
+                frasi: [
+                  'Cielo sereno, nessuna perturbazione in vista.',
+                  'Sole pieno e temperature gradevoli: un commit senza storie.',
+                  'Bel tempo stabile, ottima visibilità sul codice.',
+                ],
+              },
+            };
+
+            // Da dove soffia il vento, in base ai file toccati
+            const VENTI = {
+              N: 'nord (codice sorgente)',
+              E: 'est (documentazione)',
+              S: 'sud (test)',
+              O: 'ovest (configurazione)',
+            };
+            const direzione = (nomeFile) => {
+              if (/^docs\//i.test(nomeFile) || /\.md$/i.test(nomeFile)) return 'E';
+              if (/(^|\/)(tests?|__tests__)\//i.test(nomeFile) || /\.(test|spec)\./i.test(nomeFile)) return 'S';
+              if (/^\.github\//.test(nomeFile) || /(package(-lock)?\.json|\.ya?ml|\.toml|\.config\.|\.env)/i.test(nomeFile)) return 'O';
+              return 'N';
+            };
+
+            for (const c of commits) {
+              const sha = c.id;
+
+              // Evita doppioni se il workflow viene rieseguito
+              const esistenti = await github.paginate(github.rest.repos.listCommentsForCommit, {
+                owner, repo, commit_sha: sha, per_page: 100,
+              });
+              if (esistenti.some((x) => (x.body || '').includes(MARCATORE))) continue;
+
+              const { data } = await github.rest.repos.getCommit({ owner, repo, ref: sha });
+              if (data.parents.length > 1) continue; // salta i merge commit
+
+              const msg = c.message.toLowerCase();
+              const file = data.files || [];
+              const aggiunte = data.stats?.additions ?? 0;
+              const rimosse = data.stats?.deletions ?? 0;
+              const totale = aggiunte + rimosse;
+
+              const ora = parseInt(
+                new Intl.DateTimeFormat('it-IT', { hour: 'numeric', hour12: false, timeZone: fuso })
+                  .format(new Date(c.timestamp)),
+                10
+              ) % 24;
+
+              // Direzione dominante del vento
+              const conteggio = { N: 0, E: 0, S: 0, O: 0 };
+              file.forEach((f) => { conteggio[direzione(f.filename)]++; });
+              const dominante = Object.entries(conteggio).sort((a, b) => b[1] - a[1])[0];
+              const soloDocs = file.length > 0 && conteggio.E === file.length;
+
+              // Scelta della condizione (in ordine di priorità)
+              let chiave = 'sole';
+              if (/\brevert\b/.test(msg)) chiave = 'temporale';
+              else if (/\b(hotfix|urgent|urgente|critical)\b/.test(msg)) chiave = 'allerta';
+              else if (/\b(fix|bug|patch)\b/.test(msg)) chiave = 'pioggia';
+              else if (/\b(wip|tmp|temp)\b/.test(msg)) chiave = 'nuvoloso';
+              else if (ora < 5) chiave = 'nebbia';
+              else if (totale > 500) chiave = 'vento';
+              else if (/\b(release|v?\d+\.\d+\.\d+)\b/.test(msg)) chiave = 'arcobaleno';
+              else if (soloDocs) chiave = 'brezza';
+              else if (rimosse > 20 && rimosse > aggiunte * 2) chiave = 'pulizia';
+
+              const cond = CONDIZIONI[chiave];
+              const frase = scegli(cond.frasi, sha);
+              const vento = file.length ? `Vento da ${VENTI[dominante[0]]}` : 'Aria ferma';
+
+              const corpo = [
+                `### ${cond.icona} Previsioni per questo commit: ${cond.titolo}`,
+                '',
+                frase,
+                '',
+                `🧭 ${vento} · 📊 +${aggiunte} −${rimosse} su ${file.length} file · 🕒 ore ${ora}:00`,
+                '',
+                MARCATORE,
+              ].join('\n');
+
+              await github.rest.repos.createCommitComment({
+                owner, repo, commit_sha: sha, body: corpo,
+              });
+            }
