@@ -177,7 +177,7 @@ jobs:
                 '',
                 frase,
                 '',
-                `🧭 ${vento} · 📊 +${aggiunte} −${rimosse} su ${file.length} file · 🕒 ore ${ora}:00`,
+                `🧭 ${vento} · 📊 +${aggiunte} −${rimosse} su ${file.length} file,
                 '',
                 MARCATORE,
               ].join('\n');
